@@ -1,0 +1,15 @@
+-r requirements.txt
+
+# Lint / format
+ruff==0.7.4
+black==24.10.0
+isort==5.13.2
+pre-commit==4.0.1
+
+# Tests
+pytest==8.3.3
+pytest-cov==6.0.0
+
+# Notebook review (§6.5)
+jupyterlab==4.3.1
+matplotlib==3.9.2

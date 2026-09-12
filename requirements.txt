@@ -1,0 +1,18 @@
+# Installed on top of the apache/airflow base image (see Dockerfile), which already
+# ships apache-airflow itself plus a resolved dependency set for that version.
+#
+# Intentionally UNPINNED for anything Airflow itself cares about (pandas, pyarrow,
+# SQLAlchemy, psycopg2-binary, requests, the postgres provider): the Dockerfile
+# installs this file with `--constraint <airflow-constraints-url>`, so those versions
+# are resolved to whatever that Airflow release was tested against. Pinning them again
+# here would just create a version conflict with the constraints file.
+apache-airflow-providers-postgres
+pandas
+pyarrow
+SQLAlchemy
+psycopg2-binary
+requests
+
+# Not part of Airflow's own dependency set, safe to pin directly.
+Faker==30.8.2
+pandera==0.20.4

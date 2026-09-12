@@ -1,0 +1,124 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_META_DB_USER:-airflow}:${AIRFLOW_META_DB_PASSWORD:-airflow}@postgres/${AIRFLOW_META_DB_NAME:-airflow}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Airflow Connection for the "source system" DB — read by
+    # include/saas/ingestion/db_extract.py via BaseHook, never hardcoded.
+    AIRFLOW_CONN_SOURCE_DB: postgresql://${SOURCE_DB_USER:-saas_app}:${SOURCE_DB_PASSWORD:-saas_app}@${SOURCE_DB_HOST:-source_db}:${SOURCE_DB_PORT:-5432}/${SOURCE_DB_NAME:-saas_source}
+    # Airflow Variables, seeded from env instead of hardcoded in DAG code.
+    AIRFLOW_VAR_INGESTION_SOURCE: ${INGESTION_SOURCE:-file_drop}
+    AIRFLOW_VAR_SCHEDULE_OVERRIDE: ${SCHEDULE_OVERRIDE:-}
+    # Slack alerting is optional — include/notifications/slack.py falls back
+    # to structured logging when this is empty.
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./include:/opt/airflow/include
+    - ./plugins:/opt/airflow/plugins
+    - ./tests:/opt/airflow/tests
+    - ./pyproject.toml:/opt/airflow/pyproject.toml
+    - ./logs:/opt/airflow/logs
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    source_db:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${AIRFLOW_META_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_META_DB_PASSWORD:-airflow}
+      POSTGRES_DB: ${AIRFLOW_META_DB_NAME:-airflow}
+    volumes:
+      - airflow-postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${AIRFLOW_META_DB_USER:-airflow}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # Stands in for "the operational system" a real ingestion pipeline would
+  # extract from — deliberately a separate service from the Airflow metadata
+  # DB above, since conflating the two would misrepresent how this looks in
+  # production. The data generator upserts into it; db_extract.py reads from it.
+  source_db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${SOURCE_DB_USER:-saas_app}
+      POSTGRES_PASSWORD: ${SOURCE_DB_PASSWORD:-saas_app}
+      POSTGRES_DB: ${SOURCE_DB_NAME:-saas_source}
+    ports:
+      - "5433:5432"
+    volumes:
+      - source-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${SOURCE_DB_USER:-saas_app}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER:-airflow}" \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-airflow}"
+    depends_on: *airflow-common-depends-on
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "airflow", "jobs", "check", "--job-type", "SchedulerJob", "--hostname", "$${HOSTNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+volumes:
+  airflow-postgres-db-volume:
+  source-db-volume:
