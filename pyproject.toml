@@ -1,0 +1,34 @@
+[project]
+name = "saas-metrics-pipeline-airflow"
+version = "0.1.0"
+description = "Apache Airflow Medallion pipeline turning synthetic SaaS billing/product-usage data into daily business metrics (MRR, ARR, churn, NRR, DAU/MAU)."
+requires-python = ">=3.11,<3.12"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["dags", "include", "tests", "plugins"]
+
+[tool.ruff.lint]
+# Import ordering is isort's job (run separately in CI) — enabling ruff's own
+# "I" rule here fought isort over blank-line grouping since the two tools
+# don't share config (isort reads [tool.isort], ruff reads [tool.ruff.lint.isort]).
+select = ["E", "F", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["include", "dags", "plugins"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["include"]
+omit = ["include/saas/data_generator.py"]
